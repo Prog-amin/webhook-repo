@@ -111,7 +111,12 @@ def parse_github_event(payload):
         data['action'] = 'PUSH'
         data['from_branch'] = payload.get('ref', '').split('/')[-1]
         data['to_branch'] = payload.get('ref', '').split('/')[-1]
-        data['timestamp'] = datetime.utcnow().isoformat()
+        # Use the timestamp from the latest commit if available
+        commits = payload.get('commits', [])
+        if commits:
+            data['timestamp'] = commits[-1].get('timestamp', datetime.utcnow().isoformat())
+        else:
+            data['timestamp'] = datetime.utcnow().isoformat()
     elif event_type == 'pull_request':
         # Handle pull request and merge events
         pr = payload.get('pull_request', {})
