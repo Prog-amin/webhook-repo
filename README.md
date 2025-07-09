@@ -27,10 +27,12 @@ This repository contains a Flask app that receives GitHub webhook events (Push, 
 - Receives GitHub webhook events.
 - Example test with curl:
   ```bash
-  curl -X POST http://localhost:5000/webhook \
-    -H "Content-Type: application/json" \
-    -H "X-GitHub-Event: push" \
-    -d '{"after": "abc123", "pusher": {"name": "Travis"}, "ref": "refs/heads/staging"}'
+    $headers = @{
+        "Content-Type" = "application/json"
+        "X-GitHub-Event" = "push"
+    }
+    $body = '{"after": "abc123", "pusher": {"name": "Travis"}, "ref": "refs/heads/staging"}'
+    Invoke-RestMethod -Uri http://localhost:5000/webhook -Method Post -Headers $headers -Body $body
   ```
 
 ### GET `/events`
