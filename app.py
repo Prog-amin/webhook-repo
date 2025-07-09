@@ -4,6 +4,8 @@ from flask_cors import CORS
 from pymongo import MongoClient
 from datetime import datetime
 from dotenv import load_dotenv
+from dateutil import parser
+import pytz
 
 # Load environment variables from .env file
 load_dotenv()
@@ -90,10 +92,14 @@ HTML_TEMPLATE = '''
 </html>
 '''
 
-def get_utc_iso():
-    """Return current UTC time as ISO 8601 string with 'Z'."""
-    return datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'
-
+def to_utc_isoformat(dt_str):
+    """Convert any datetime string to UTC ISO format ending with 'Z'."""
+    dt = parser.isoparse(dt_str)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=pytz.UTC)
+    else:
+        dt = dt.astimezone(pytz.UTC)
+    return dt.replace(tzinfo=None).isoformat() + 'Z'
 
 def parse_github_event(payload):
     """
@@ -116,15 +122,16 @@ def parse_github_event(payload):
         data['action'] = 'PUSH'
         data['from_branch'] = payload.get('ref', '').split('/')[-1]
         data['to_branch'] = payload.get('ref', '').split('/')[-1]
-        # Use the timestamp from the latest commit if available, ensure ISO 8601 with Z
+        # Use the timestamp from the latest commit if available, normalized to UTC
         commits = payload.get('commits', [])
         if commits:
-            ts = commits[-1].get('timestamp')
-            if ts and not ts.endswith('Z'):
-                ts = ts.rstrip('Z') + 'Z'
-            data['timestamp'] = ts if ts else get_utc_iso()
+            commit_ts = commits[-1].get('timestamp', None)
+            if commit_ts:
+                data['timestamp'] = to_utc_isoformat(commit_ts)
+            else:
+                data['timestamp'] = datetime.utcnow().isoformat() + 'Z'
         else:
-            data['timestamp'] = get_utc_iso()
+            data['timestamp'] = datetime.utcnow().isoformat() + 'Z'
     elif event_type == 'pull_request':
         # Handle pull request and merge events
         pr = payload.get('pull_request', {})
@@ -135,20 +142,22 @@ def parse_github_event(payload):
             data['action'] = 'PULL_REQUEST'
             data['from_branch'] = pr.get('head', {}).get('ref', '')
             data['to_branch'] = pr.get('base', {}).get('ref', '')
-            ts = pr.get('created_at')
-            if ts and not ts.endswith('Z'):
-                ts = ts.rstrip('Z') + 'Z'
-            data['timestamp'] = ts if ts else get_utc_iso()
+            created_at = pr.get('created_at', None)
+            if created_at:
+                data['timestamp'] = to_utc_isoformat(created_at)
+            else:
+                data['timestamp'] = datetime.utcnow().isoformat() + 'Z'
         elif pr_action == 'closed' and pr.get('merged', False):
             data['request_id'] = str(pr.get('id', ''))
             data['author'] = pr.get('user', {}).get('login', '')
             data['action'] = 'MERGE'
             data['from_branch'] = pr.get('head', {}).get('ref', '')
             data['to_branch'] = pr.get('base', {}).get('ref', '')
-            ts = pr.get('merged_at')
-            if ts and not ts.endswith('Z'):
-                ts = ts.rstrip('Z') + 'Z'
-            data['timestamp'] = ts if ts else get_utc_iso()
+            merged_at = pr.get('merged_at', None)
+            if merged_at:
+                data['timestamp'] = to_utc_isoformat(merged_at)
+            else:
+                data['timestamp'] = datetime.utcnow().isoformat() + 'Z'
         else:
             return None
     else:
@@ -170,9 +179,9 @@ def webhook():
 @app.route('/events', methods=['GET'])
 def get_events():
     """
-    Return the latest 20 events, sorted by timestamp descending.
+    Return the latest 20 events, sorted by timestamp and _id descending.
     """
-    events = list(events_collection.find().sort('timestamp', -1).limit(20))
+    events = list(events_collection.find().sort([('timestamp', -1), ('_id', -1)]).limit(20))
     for e in events:
         e['_id'] = str(e['_id'])
     return jsonify(events)
@@ -186,3 +195,4 @@ def index():
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
+ 
