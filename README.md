@@ -46,5 +46,3 @@ This repository contains a Flask app that receives GitHub webhook events (Push, 
 - The app supports CORS for local frontend development.
 - For real GitHub integration, set up a webhook in your GitHub repo to POST to `/webhook`.
 - The UI should poll `/events` every 15 seconds to display the latest activity.
-
-Refer my portfolio: https://prog-amin.github.io/my-portfolio
