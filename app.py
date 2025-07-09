@@ -90,6 +90,11 @@ HTML_TEMPLATE = '''
 </html>
 '''
 
+def get_utc_iso():
+    """Return current UTC time as ISO 8601 string with 'Z'."""
+    return datetime.utcnow().replace(microsecond=0).isoformat() + 'Z'
+
+
 def parse_github_event(payload):
     """
     Parse the incoming GitHub webhook payload and extract relevant event data.
@@ -111,12 +116,15 @@ def parse_github_event(payload):
         data['action'] = 'PUSH'
         data['from_branch'] = payload.get('ref', '').split('/')[-1]
         data['to_branch'] = payload.get('ref', '').split('/')[-1]
-        # Use the timestamp from the latest commit if available
+        # Use the timestamp from the latest commit if available, ensure ISO 8601 with Z
         commits = payload.get('commits', [])
         if commits:
-            data['timestamp'] = commits[-1].get('timestamp', datetime.utcnow().isoformat())
+            ts = commits[-1].get('timestamp')
+            if ts and not ts.endswith('Z'):
+                ts = ts.rstrip('Z') + 'Z'
+            data['timestamp'] = ts if ts else get_utc_iso()
         else:
-            data['timestamp'] = datetime.utcnow().isoformat()
+            data['timestamp'] = get_utc_iso()
     elif event_type == 'pull_request':
         # Handle pull request and merge events
         pr = payload.get('pull_request', {})
@@ -127,14 +135,20 @@ def parse_github_event(payload):
             data['action'] = 'PULL_REQUEST'
             data['from_branch'] = pr.get('head', {}).get('ref', '')
             data['to_branch'] = pr.get('base', {}).get('ref', '')
-            data['timestamp'] = pr.get('created_at', datetime.utcnow().isoformat())
+            ts = pr.get('created_at')
+            if ts and not ts.endswith('Z'):
+                ts = ts.rstrip('Z') + 'Z'
+            data['timestamp'] = ts if ts else get_utc_iso()
         elif pr_action == 'closed' and pr.get('merged', False):
             data['request_id'] = str(pr.get('id', ''))
             data['author'] = pr.get('user', {}).get('login', '')
             data['action'] = 'MERGE'
             data['from_branch'] = pr.get('head', {}).get('ref', '')
             data['to_branch'] = pr.get('base', {}).get('ref', '')
-            data['timestamp'] = pr.get('merged_at', datetime.utcnow().isoformat())
+            ts = pr.get('merged_at')
+            if ts and not ts.endswith('Z'):
+                ts = ts.rstrip('Z') + 'Z'
+            data['timestamp'] = ts if ts else get_utc_iso()
         else:
             return None
     else:
