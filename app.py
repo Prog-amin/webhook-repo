@@ -65,8 +65,7 @@ HTML_TEMPLATE = '''
 '''
 
 def parse_github_event(payload):
-    # Determine event type and extract fields
-    event_type = request.headers.get('X-GitHub-Event', '').upper()
+    event_type = request.headers.get('X-GitHub-Event', '').lower()
     data = {
         'request_id': '',
         'author': '',
@@ -75,31 +74,32 @@ def parse_github_event(payload):
         'to_branch': '',
         'timestamp': ''
     }
-    if event_type == 'PUSH':
+    if event_type == 'push':
         data['request_id'] = payload.get('after', '')
         data['author'] = payload.get('pusher', {}).get('name', '')
         data['action'] = 'PUSH'
         data['from_branch'] = payload.get('ref', '').split('/')[-1]
         data['to_branch'] = payload.get('ref', '').split('/')[-1]
         data['timestamp'] = datetime.utcnow().isoformat()
-    elif event_type == 'PULL_REQUEST':
+    elif event_type == 'pull_request':
         pr = payload.get('pull_request', {})
-        data['request_id'] = str(pr.get('id', ''))
-        data['author'] = pr.get('user', {}).get('login', '')
-        data['action'] = 'PULL_REQUEST'
-        data['from_branch'] = pr.get('head', {}).get('ref', '')
-        data['to_branch'] = pr.get('base', {}).get('ref', '')
-        data['timestamp'] = pr.get('created_at', datetime.utcnow().isoformat())
-    elif event_type == 'MERGE':
-        # GitHub does not send a 'merge' event, so handle as merged pull_request
-        pr = payload.get('pull_request', {})
-        if pr.get('merged', False):
+        pr_action = payload.get('action', '')
+        if pr_action == 'opened':
+            data['request_id'] = str(pr.get('id', ''))
+            data['author'] = pr.get('user', {}).get('login', '')
+            data['action'] = 'PULL_REQUEST'
+            data['from_branch'] = pr.get('head', {}).get('ref', '')
+            data['to_branch'] = pr.get('base', {}).get('ref', '')
+            data['timestamp'] = pr.get('created_at', datetime.utcnow().isoformat())
+        elif pr_action == 'closed' and pr.get('merged', False):
             data['request_id'] = str(pr.get('id', ''))
             data['author'] = pr.get('user', {}).get('login', '')
             data['action'] = 'MERGE'
             data['from_branch'] = pr.get('head', {}).get('ref', '')
             data['to_branch'] = pr.get('base', {}).get('ref', '')
             data['timestamp'] = pr.get('merged_at', datetime.utcnow().isoformat())
+        else:
+            return None
     else:
         return None
     return data
