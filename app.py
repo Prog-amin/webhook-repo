@@ -5,18 +5,22 @@ from pymongo import MongoClient
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
+# MongoDB connection URI
 MONGO_URI = os.getenv('MONGO_URI', 'mongodb://localhost:27017/webhook_db')
 
+# Initialize Flask app and enable CORS
 app = Flask(__name__)
 CORS(app)
 
+# Connect to MongoDB
 client = MongoClient(MONGO_URI)
 db = client.get_default_database()
 events_collection = db['events']
 
+# HTML template for the UI
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -34,9 +38,19 @@ HTML_TEMPLATE = '''
     <h2>Latest GitHub Events</h2>
     <div id="events">Loading...</div>
     <script>
+        // Store displayed event IDs to avoid duplicates
+        let displayedIds = new Set();
+        // Format ISO date string to readable format
+        function formatDate(isoString) {
+            const date = new Date(isoString);
+            return date.toLocaleString('en-GB', {
+                day: 'numeric', month: 'long', year: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'UTC'
+            }) + ' UTC';
+        }
+        // Format event message based on action type
         function formatEvent(e) {
-            const date = new Date(e.timestamp);
-            const dateStr = date.toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'UTC' }) + ' UTC';
+            const dateStr = formatDate(e.timestamp);
             if (e.action === 'PUSH') {
                 return `<b>${e.author}</b> pushed to <b>${e.to_branch}</b> on ${dateStr}`;
             } else if (e.action === 'PULL_REQUEST') {
@@ -47,15 +61,27 @@ HTML_TEMPLATE = '''
                 return JSON.stringify(e);
             }
         }
+        // Fetch and display events, avoiding duplicates and only showing new ones
         async function fetchEvents() {
             const res = await fetch('/events');
             const data = await res.json();
             const eventsDiv = document.getElementById('events');
-            if (data.length === 0) {
+            if (!data.length) {
                 eventsDiv.innerHTML = '<i>No events yet.</i>';
                 return;
             }
-            eventsDiv.innerHTML = data.map(e => `<div class='event'>${formatEvent(e)}</div>`).join('');
+            // Only display events not already shown
+            const newEvents = data.filter(e => !displayedIds.has(e._id));
+            if (newEvents.length === 0) return; // No new events
+            newEvents.forEach(e => displayedIds.add(e._id));
+            // Only keep the latest 20 events in the UI
+            if (displayedIds.size > 20) {
+                displayedIds = new Set(Array.from(displayedIds).slice(-20));
+            }
+            eventsDiv.innerHTML = data
+                .filter(e => displayedIds.has(e._id))
+                .map(e => `<div class='event'>${formatEvent(e)}</div>`)
+                .join('');
         }
         fetchEvents();
         setInterval(fetchEvents, 15000);
@@ -65,6 +91,10 @@ HTML_TEMPLATE = '''
 '''
 
 def parse_github_event(payload):
+    """
+    Parse the incoming GitHub webhook payload and extract relevant event data.
+    Handles push, pull request, and merge events.
+    """
     event_type = request.headers.get('X-GitHub-Event', '').lower()
     data = {
         'request_id': '',
@@ -75,6 +105,7 @@ def parse_github_event(payload):
         'timestamp': ''
     }
     if event_type == 'push':
+        # Handle push event
         data['request_id'] = payload.get('after', '')
         data['author'] = payload.get('pusher', {}).get('name', '')
         data['action'] = 'PUSH'
@@ -82,6 +113,7 @@ def parse_github_event(payload):
         data['to_branch'] = payload.get('ref', '').split('/')[-1]
         data['timestamp'] = datetime.utcnow().isoformat()
     elif event_type == 'pull_request':
+        # Handle pull request and merge events
         pr = payload.get('pull_request', {})
         pr_action = payload.get('action', '')
         if pr_action == 'opened':
@@ -106,9 +138,10 @@ def parse_github_event(payload):
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    """
+    Webhook endpoint to receive GitHub events and store them in MongoDB.
+    """
     payload = request.json
-    event_type = request.headers.get('X-GitHub-Event', '').upper()
-    # Handle PUSH and PULL_REQUEST (MERGE is a special case of PULL_REQUEST)
     data = parse_github_event(payload)
     if not data or not data['action']:
         return jsonify({'error': 'Unsupported or malformed event'}), 400
@@ -117,7 +150,9 @@ def webhook():
 
 @app.route('/events', methods=['GET'])
 def get_events():
-    # Return the latest 20 events, sorted by timestamp descending
+    """
+    Return the latest 20 events, sorted by timestamp descending.
+    """
     events = list(events_collection.find().sort('timestamp', -1).limit(20))
     for e in events:
         e['_id'] = str(e['_id'])
@@ -125,6 +160,9 @@ def get_events():
 
 @app.route('/', methods=['GET'])
 def index():
+    """
+    Render the minimal UI for displaying events.
+    """
     return render_template_string(HTML_TEMPLATE)
 
 if __name__ == '__main__':
